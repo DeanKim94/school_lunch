@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>급식지도 자동 배치 시스템</title>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- SheetJS for Excel processing -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Pretendard:wght@400;600;700&display=swap');
+        body { font-family: 'Pretendard', sans-serif; background-color: #f8fafc; }
+        .hidden { display: none; }
+        .null-cell { background-color: #fef9c3; } /* 노란색 빈칸 */
+        .card { background: white; border-radius: 0.75rem; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { border: 1px solid #e2e8f0; padding: 0.75rem; text-align: center; }
+        th { background-color: #f1f5f9; font-weight: 600; }
+        .btn-primary { background-color: #2563eb; color: white; padding: 0.5rem 1rem; border-radius: 0.5rem; transition: all 0.2s; }
+        .btn-primary:hover { background-color: #1d4ed8; }
+        .btn-success { background-color: #16a34a; color: white; padding: 0.5rem 1rem; border-radius: 0.5rem; transition: all 0.2s; }
+        .btn-success:hover { background-color: #15803d; }
+        .btn-outline { border: 1px solid #e2e8f0; padding: 0.5rem 1rem; border-radius: 0.5rem; }
+        
+        /* 주차별 배경색 구분 (홀수 주차와 짝수 주차 구분용 클래스) */
+        .week-even { background-color: #ffffff; }
+        .week-odd { background-color: #f1f5f9; }
+    </style>
+</head>
+<body class="p-4 md:p-8">
+
+    <div class="max-w-6xl mx-auto">
+        <header class="mb-8 text-center">
+            <h1 class="text-3xl font-bold text-slate-800 mb-2">🍱 급식지도 자동 배치 시스템</h1>
+            <p class="text-slate-600">엑셀 시간표를 분석하여 공정하게 지도교사를 배치합니다.</p>
+        </header>
+
+        <!-- 1단계: 파일 업로드 및 교사 확정 -->
+        <section id="step1" class="card p-6 mb-8">
+            <h2 class="text-xl font-semibold mb-4 text-blue-700">1단계: 시간표 업로드 및 지도교사 확정</h2>
+            <div class="flex items-center justify-center w-full">
+                <label class="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-slate-300 rounded-lg cursor-pointer bg-slate-50 hover:bg-slate-100">
+                    <div class="flex flex-col items-center justify-center pt-5 pb-6">
+                        <svg class="w-8 h-8 mb-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
+                        <p class="mb-2 text-sm text-slate-500 font-semibold">클릭하여 교사시간표(xlsx) 업로드</p>
+                    </div>
+                    <input type="file" id="excelInput" class="hidden" accept=".xlsx" />
+                </label>
+            </div>
+            
+            <div id="teacherTableContainer" class="mt-6 hidden">
+                <div class="flex justify-between items-end mb-2">
+                    <h3 class="font-semibold text-lg text-slate-700">교사 명단 및 4교시 수업 정보 확인 (급식지도 대상자만 체크)</h3>
+                    <div class="text-blue-600 font-bold bg-blue-50 px-3 py-1 rounded-full border border-blue-200">
+                        선택된 인원: <span id="selectedCountTop">0</span>명
+                    </div>
+                </div>
+                
+                <div class="overflow-x-auto max-h-96 border rounded-lg">
+                    <table id="teacherTable">
+                        <thead class="sticky top-0 z-10">
+                            <tr>
+                                <th>선택</th>
+                                <th>순번</th>
+                                <th>교사명</th>
+                                <th>월(4)</th>
+                                <th>화(4)</th>
+                                <th>수(4)</th>
+                                <th>목(4)</th>
+                                <th>금(4)</th>
+                            </tr>
+                        </thead>
+                        <tbody id="teacherBody"></tbody>
+                    </table>
+                </div>
+
+                <div class="mt-4 flex justify-between items-center">
+                    <div class="text-slate-600 font-medium">
+                        총 <span id="selectedCountBottom">0</span>명의 교사가 선택되었습니다.
+                    </div>
+                    <button id="confirmStep1" class="btn-primary">교사 확정 및 기간 설정 이동</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- 2단계: 기간 설정 및 배식일 확정 -->
+        <section id="step2" class="card p-6 mb-8 hidden">
+            <h2 class="text-xl font-semibold mb-4 text-blue-700">2단계: 지도 기간 및 실제 배식일 확정</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 mb-1">지도 시작일</label>
+                    <input type="date" id="startDate" class="w-full p-2 border rounded-md">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 mb-1">지도 종료일</label>
+                    <input type="date" id="endDate" class="w-full p-2 border rounded-md">
+                </div>
+            </div>
+            <div class="flex justify-center mb-6">
+                <button id="generateDays" class="btn-outline">배식 가능 날짜 목록 생성</button>
+            </div>
+
+            <div id="daySelectionContainer" class="hidden border-t pt-6">
+                <div class="flex justify-between items-end mb-2">
+                    <div>
+                        <h3 class="font-semibold text-lg text-slate-700">배식 활동 대상일 선택 (공휴일 등 제외)</h3>
+                        <p class="text-sm text-slate-500">* 배식 지도가 있는 날만 체크하세요.</p>
+                    </div>
+                    <div class="text-green-600 font-bold bg-green-50 px-3 py-1 rounded-full border border-green-200">
+                        선택된 배식일: <span id="selectedDaysTop">0</span>일
+                    </div>
+                </div>
+                
+                <div class="overflow-x-auto max-h-80 border rounded-lg">
+                    <table id="dayTable">
+                        <thead class="sticky top-0 z-10">
+                            <tr>
+                                <th>선택</th>
+                                <th>날짜</th>
+                                <th>요일</th>
+                            </tr>
+                        </thead>
+                        <tbody id="dayBody"></tbody>
+                    </table>
+                </div>
+
+                <div class="mt-4 flex justify-between items-center">
+                    <div class="text-slate-600 font-medium">
+                        총 <span id="selectedDaysBottom">0</span>일의 배식일이 선택되었습니다.
+                    </div>
+                </div>
+
+                <div class="mt-6 flex justify-center flex-col items-center">
+                    <p class="text-xs text-blue-600 mb-2 font-semibold">✨ AI 기반 최적화 알고리즘: 교사간 총합 편차 최소화 & 장소 균등 배치 적용</p>
+                    <button id="runAssign" class="btn-success text-lg px-8 shadow-md">최종 배치하기</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- 3단계: 결과 확인 -->
+        <section id="step3" class="card p-6 hidden">
+            <h2 class="text-xl font-semibold mb-4 text-blue-700">3단계: 최종 배치 결과 및 통계</h2>
+            
+            <div class="mb-6 flex justify-between items-center">
+                <h3 class="font-semibold">최종 배치표 (교사명 클릭 시 수정 가능)</h3>
+                <button id="downloadExcel" class="btn-primary flex items-center gap-2">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                    엑셀 파일 저장
+                </button>
+            </div>
+
+            <div class="overflow-x-auto mb-8 border rounded-lg">
+                <table id="resultTable">
+                    <thead>
+                        <tr>
+                            <th>날짜</th>
+                            <th>요일</th>
+                            <th>정보내</th>
+                            <th>정보외</th>
+                            <th>별관내</th>
+                            <th>별관외</th>
+                        </tr>
+                    </thead>
+                    <tbody id="resultBody"></tbody>
+                </table>
+            </div>
+
+            <h3 class="font-semibold mb-2 text-slate-700 text-center text-lg">📊 교사별 장소 배정 횟수 통계</h3>
+            <p class="text-sm text-center text-slate-500 mb-4">* 교사별 총합 편차를 1일 이내로 조정하며, 4교시 수업 여부에 따라 불가피한 차이가 있을 수 있습니다.</p>
+            <div class="overflow-x-auto border rounded-lg max-w-3xl mx-auto">
+                <table id="statsTable">
+                    <thead>
+                        <tr>
+                            <th>교사명</th>
+                            <th>정보내</th>
+                            <th>정보외</th>
+                            <th>별관내</th>
+                            <th>별관외</th>
+                            <th class="bg-blue-50 text-blue-700">총합</th>
+                        </tr>
+                    </thead>
+                    <tbody id="statsBody"></tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+
+    <script>
+        let teachers = [];
+        let finalResults = [];
+        let teacherCounts = {}; // { "홍길동": { "정보내": 1, "정보외": 0, "별관내": 2, "별관외": 1, "total": 4 } }
+        let activeDates = [];
+        
+        const PLACES_NAME = ["정보내", "정보외", "별관내", "별관외"];
+
+        // 엑셀 읽기
+        document.getElementById('excelInput').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            const reader = new FileReader();
+            reader.onload = function(evt) {
+                const data = evt.target.result;
+                const workbook = XLSX.read(data, { type: 'binary' });
+                const sheetName = workbook.SheetNames[0];
+                const worksheet = workbook.Sheets[sheetName];
+                const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+                processTeacherData(jsonData);
+            };
+            reader.readAsBinaryString(file);
+        });
+
+        function cleanName(name) {
+            if (!name) return "";
+            return String(name).replace(/\s+/g, '').match(/[가-힣]+/)?.[0] || String(name);
+        }
+
+        function getClassInfo(cell) {
+            if (!cell) return null;
+            const match = String(cell).match(/\d{3}/);
+            return match ? match[0] : null;
+        }
+
+        function processTeacherData(rows) {
+            teachers = [];
+            const colIndices = [4, 10, 17, 23, 30]; // 월,화,수,목,금 (E, K, R, X, AE)
+            
+            rows.forEach((row, index) => {
+                if (index < 2) return;
+                const nameRaw = row[0];
+                if (!nameRaw || String(nameRaw).includes("교사") || String(nameRaw).includes("성명")) return;
+
+                const name = cleanName(nameRaw);
+                const info = colIndices.map(i => getClassInfo(row[i]));
+
+                teachers.push({ id: index, name: name, lessons: info, selected: true });
+            });
+
+            renderTeacherTable();
+            updateSelectedCount();
+            document.getElementById('teacherTableContainer').classList.remove('hidden');
+        }
+
+        function updateSelectedCount() {
+            const count = teachers.filter(t => t.selected).length;
+            document.getElementById('selectedCountTop').innerText = count;
+            document.getElementById('selectedCountBottom').innerText = count;
+        }
+
+        function renderTeacherTable() {
+            const body = document.getElementById('teacherBody');
+            body.innerHTML = '';
+            teachers.forEach((t, i) => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td><input type="checkbox" ${t.selected ? 'checked' : ''} onchange="teachers[${i}].selected = this.checked; updateSelectedCount();"></td>
+                    <td>${i + 1}</td>
+                    <td>${t.name}</td>
+                    ${t.lessons.map(l => `<td class="${l ? '' : 'null-cell'}">${l || ''}</td>`).join('')}
+                `;
+                body.appendChild(tr);
+            });
+        }
+
+        // 1단계 -> 2단계
+        document.getElementById('confirmStep1').onclick = () => {
+            const count = teachers.filter(t => t.selected).length;
+            if (count < 4) { alert("지도교사가 최소 4명 이상 필요합니다."); return; }
+            document.getElementById('step2').classList.remove('hidden');
+            document.getElementById('step2').scrollIntoView({ behavior: 'smooth' });
+        };
+
+        // 배식일 생성 버튼
+        document.getElementById('generateDays').onclick = () => {
+            const startStr = document.getElementById('startDate').value;
+            const endStr = document.getElementById('endDate').value;
+            if (!startStr || !endStr) { alert("기간을 입력하세요."); return; }
+
+            const start = new Date(startStr);
+            const end = new Date(endStr);
+            const dayMap = ["일", "월", "화", "수", "목", "금", "토"];
+            
+            activeDates = [];
+            let current = new Date(start);
+            while (current <= end) {
+                const dayIdx = current.getDay();
+                if (dayIdx !== 0 && dayIdx !== 6) { // 토,일 제외
+                    activeDates.push({
+                        date: current.toISOString().split('T')[0],
+                        day: dayMap[dayIdx],
+                        dayIdx: dayIdx,
+                        checked: true
+                    });
+                }
+                current.setDate(current.getDate() + 1);
+            }
+
+            renderDayTable();
+            updateDayCount();
+            document.getElementById('daySelectionContainer').classList.remove('hidden');
+        };
+
+        function updateDayCount() {
+            const count = activeDates.filter(d => d.checked).length;
+            document.getElementById('selectedDaysTop').innerText = count;
+            document.getElementById('selectedDaysBottom').innerText = count;
+        }
+
+        function renderDayTable() {
+            const body = document.getElementById('dayBody');
+            body.innerHTML = '';
+            activeDates.forEach((d, i) => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td><input type="checkbox" ${d.checked ? 'checked' : ''} onchange="activeDates[${i}].checked = this.checked; updateDayCount();"></td>
+                    <td>${d.date}</td>
+                    <td>${d.day}요일</td>
+                `;
+                body.appendChild(tr);
+            });
+        }
+
+        // 장소 배정 최적화 알고리즘 (4! = 24가지 경우의 수를 평가하여 가장 균등한 장소 배정 도출)
+        function getBestLocationAssignment(selectedTeachers) {
+            const perms = [
+                [0,1,2,3],[0,1,3,2],[0,2,1,3],[0,2,3,1],[0,3,1,2],[0,3,2,1],
+                [1,0,2,3],[1,0,3,2],[1,2,0,3],[1,2,3,0],[1,3,0,2],[1,3,2,0],
+                [2,0,1,3],[2,0,3,1],[2,1,0,3],[2,1,3,0],[2,3,0,1],[2,3,1,0],
+                [3,0,1,2],[3,0,2,1],[3,1,0,2],[3,1,2,0],[3,2,0,1],[3,2,1,0]
+            ];
+            
+            let bestPerm = perms[0];
+            let minScore = Infinity;
+
+            for (let perm of perms) {
+                let score = 0;
+                for (let i = 0; i < 4; i++) {
+                    const teacher = selectedTeachers[perm[i]];
+                    if (teacher) {
+                        const locName = PLACES_NAME[i];
+                        const locCount = teacherCounts[teacher.name][locName];
+                        // 횟수의 제곱을 더하여, 이미 많이 간 장소에 또 배정되는 것을 강력히 억제함
+                        score += (locCount * locCount);
+                    }
+                }
+                
+                // 점수가 동일할 경우 고착화되는 현상을 막기 위해 미세한 난수 추가
+                const randomJitter = Math.random() * 0.1; 
+                if (score + randomJitter < minScore) {
+                    minScore = score + randomJitter;
+                    bestPerm = perm;
+                }
+            }
+
+            const assignedNames = new Array(4);
+            for (let i = 0; i < 4; i++) {
+                const targetTeacher = selectedTeachers[bestPerm[i]];
+                assignedNames[i] = targetTeacher ? targetTeacher.name : "인원부족";
+            }
+            return assignedNames;
+        }
+
+        // 배치 알고리즘 실행
+        document.getElementById('runAssign').onclick = () => {
+            const selectedDates = activeDates.filter(d => d.checked);
+            if (selectedDates.length === 0) { alert("배식 활동을 할 날짜를 최소 하나 이상 선택하세요."); return; }
+
+            const pool = teachers.filter(t => t.selected);
+            
+            // 통계 초기화
+            teacherCounts = {};
+            pool.forEach(p => {
+                teacherCounts[p.name] = { total: 0, "정보내": 0, "정보외": 0, "별관내": 0, "별관외": 0 };
+            });
+
+            const results = [];
+            
+            selectedDates.forEach((dateObj, dateIndex) => {
+                const lessonIdx = dateObj.dayIdx - 1; // 0(월)~4(금)
+                
+                // 4교시 수업 없는 교사들 필터링
+                let available = pool.filter(p => !p.lessons[lessonIdx]);
+                
+                // 알고리즘 고도화: 남은 미래 배식 가능일수 계산 (향후 기회가 적은 사람을 우선 배치하기 위함)
+                available.forEach(p => {
+                    let futureAvail = 0;
+                    for (let j = dateIndex + 1; j < selectedDates.length; j++) {
+                        if (!p.lessons[selectedDates[j].dayIdx - 1]) futureAvail++;
+                    }
+                    p.futureAvail = futureAvail;
+                    p.todayRandom = Math.random();
+                });
+
+                // 총합 편차 1일 이내 알고리즘: 1순위(현재까지 배정횟수 적은자), 2순위(앞으로 기회가 적은자), 3순위(랜덤)
+                available.sort((a, b) => {
+                    if (teacherCounts[a.name].total !== teacherCounts[b.name].total) {
+                        return teacherCounts[a.name].total - teacherCounts[b.name].total;
+                    }
+                    if (a.futureAvail !== b.futureAvail) {
+                        return a.futureAvail - b.futureAvail; 
+                    }
+                    return a.todayRandom - b.todayRandom;
+                });
+
+                // 상위 4명 추출 (인원이 모자랄 수 있으므로 최대 4명)
+                const selectedTeachers = [];
+                for(let i=0; i<4; i++) {
+                    selectedTeachers.push(available[i] || null);
+                }
+
+                // 장소 균등 최적화 함수 호출
+                const assignedPlaces = getBestLocationAssignment(selectedTeachers);
+
+                // 통계 업데이트
+                for(let i=0; i<4; i++) {
+                    const name = assignedPlaces[i];
+                    if (name !== "인원부족") {
+                        teacherCounts[name].total++;
+                        teacherCounts[name][PLACES_NAME[i]]++;
+                    }
+                }
+
+                results.push({
+                    date: dateObj.date,
+                    day: dateObj.day,
+                    places: assignedPlaces
+                });
+            });
+
+            finalResults = results;
+            renderResults();
+            document.getElementById('step3').classList.remove('hidden');
+            document.getElementById('step3').scrollIntoView({ behavior: 'smooth' });
+        };
+
+        function renderResults() {
+            const resBody = document.getElementById('resultBody');
+            resBody.innerHTML = '';
+            
+            let currentWeekIdx = -1;
+            let lastDate = null;
+
+            finalResults.forEach((r, rIdx) => {
+                const tr = document.createElement('tr');
+                const currentDate = new Date(r.date);
+                
+                // 주차 계산
+                const currentDayIdx = currentDate.getDay();
+                if (lastDate === null || currentDayIdx === 1 || currentDayIdx < new Date(lastDate).getDay()) {
+                    currentWeekIdx++;
+                }
+                lastDate = r.date;
+
+                // 주차별 배경색 클래스 적용
+                tr.className = currentWeekIdx % 2 === 0 ? 'week-even' : 'week-odd';
+                
+                tr.innerHTML = `
+                    <td class="font-medium">${r.date}</td>
+                    <td>${r.day}</td>
+                    ${r.places.map((p, pIdx) => `<td contenteditable="true" onblur="updateManual(${rIdx}, ${pIdx}, this)">${p}</td>`).join('')}
+                `;
+                resBody.appendChild(tr);
+            });
+
+            const statBody = document.getElementById('statsBody');
+            statBody.innerHTML = '';
+            
+            // 총합이 높은 순으로 정렬
+            Object.entries(teacherCounts).sort((a,b) => b[1].total - a[1].total).forEach(([name, cnt]) => {
+                statBody.innerHTML += `
+                    <tr>
+                        <td class="font-medium">${name}</td>
+                        <td class="text-slate-600">${cnt['정보내']}</td>
+                        <td class="text-slate-600">${cnt['정보외']}</td>
+                        <td class="text-slate-600">${cnt['별관내']}</td>
+                        <td class="text-slate-600">${cnt['별관외']}</td>
+                        <td class="text-blue-600 font-bold bg-blue-50">${cnt.total}회</td>
+                    </tr>
+                `;
+            });
+        }
+
+        // 수동 수정 시 장소별 통계 재계산
+        window.updateManual = (rIdx, pIdx, el) => {
+            const newName = el.innerText.trim();
+            finalResults[rIdx].places[pIdx] = newName;
+            
+            // 통계 리셋 후 전체 재계산
+            const newCounts = {};
+            teachers.filter(t => t.selected).forEach(p => {
+                newCounts[p.name] = { total: 0, "정보내": 0, "정보외": 0, "별관내": 0, "별관외": 0 };
+            });
+            
+            finalResults.forEach(r => {
+                r.places.forEach((p, idx) => { 
+                    if(newCounts.hasOwnProperty(p)) {
+                        newCounts[p].total++;
+                        newCounts[p][PLACES_NAME[idx]]++;
+                    } 
+                });
+            });
+            teacherCounts = newCounts;
+            renderResults(); 
+        };
+
+        // 엑셀 저장
+        document.getElementById('downloadExcel').onclick = () => {
+            const wb = XLSX.utils.book_new();
+            const ws1Data = [["날짜", "요일", "정보내", "정보외", "별관내", "별관외"]];
+            finalResults.forEach(r => ws1Data.push([r.date, r.day, ...r.places]));
+            XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(ws1Data), "급식지도 배치 최종");
+
+            const ws2Data = [["교사명", "정보내", "정보외", "별관내", "별관외", "총합"]];
+            Object.entries(teacherCounts).sort((a,b) => b[1].total - a[1].total).forEach(([name, cnt]) => {
+                ws2Data.push([name, cnt['정보내'], cnt['정보외'], cnt['별관내'], cnt['별관외'], cnt.total]);
+            });
+            XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(ws2Data), "교사별 장소 통계");
+
+            XLSX.writeFile(wb, `급식지도_배치_${new Date().toISOString().slice(5,10).replace('-','')}.xlsx`);
+        };
+    </script>
+</body>
+</html>
